@@ -10,7 +10,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
     """
 
     def __init__(self, delta_prime=0.0, max_options=3, **kwargs):
-        super().__init__(leaf_prediction="mc", **kwargs)
+        super().__init__(**kwargs)
         self.delta_prime = delta_prime
         self.max_options = max_options
 
