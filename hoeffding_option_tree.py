@@ -1,3 +1,5 @@
+from collections import Counter
+
 from river.tree.splitter import GaussianSplitter
 from river.tree.nodes.htc_nodes import LeafMajorityClass, LeafNaiveBayes, LeafNaiveBayesAdaptive
 from river.tree import HoeffdingTreeClassifier
@@ -76,17 +78,22 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
 
     def predict_proba_one(self, x):
         proba = {c: 0.0 for c in sorted(self.classes)}
-        starting_node = self._root
-        if starting_node is not None:
+        active_nodes = [self._root]
+        leafs = []
+        while len(active_nodes) > 0:
+            starting_node = active_nodes.pop(0)
             if isinstance(starting_node, OptionNode):
-                starting_node = starting_node.traverse()
-
-            if isinstance(starting_node, DTBranch):
+                active_nodes.append(starting_node.traverse())
+            # TODO - non mi torna come fa a richiamare la traverse su un option node visto che arriva alla foglia!
+            elif isinstance(starting_node, DTBranch):
                 leaf = starting_node.traverse(x, until_leaf=True)
+                leafs.append(leaf)
             else:
                 leaf = starting_node
+                leafs.append(leaf)
 
-            proba.update(leaf.prediction(x, tree=self))
+        leaf = Counter(leafs).most_common(1)[0][0]
+        proba.update(leaf.prediction(x, tree=self))
         return proba
 
     # TODO - gestire il fatto di creare un option node
