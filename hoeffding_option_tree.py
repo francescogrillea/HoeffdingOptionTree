@@ -76,8 +76,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             self._root.add_option_branch(new_node)
             self._n_active_leaves = 1
 
-    def predict_proba_one(self, x):
-        proba = {c: 0.0 for c in sorted(self.classes)}
+    def traverse(self, x):
         active_nodes = [self._root]
         leafs = []
         while len(active_nodes) > 0:
@@ -86,12 +85,22 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                 active_nodes.append(starting_node.traverse())
             # TODO - non mi torna come fa a richiamare la traverse su un option node visto che arriva alla foglia!
             elif isinstance(starting_node, DTBranch):
-                leaf = starting_node.traverse(x, until_leaf=True)
-                leafs.append(leaf)
+                node = starting_node.traverse(x, until_leaf=False)
+                while isinstance(node, DTBranch):
+                    # TODO - provare a vedere se mettendo until_leaf=True posso recuperare l'ultimo prima delll'eccezione
+                    node = starting_node.traverse(x, until_leaf=False)
+                if isinstance(node, OptionNode):
+                    active_nodes.append(node)
+                elif isinstance(node, HTLeaf):
+                    leafs.append(node)
             else:
                 leaf = starting_node
                 leafs.append(leaf)
+        return leafs
 
+    def predict_proba_one(self, x):
+        proba = {c: 0.0 for c in sorted(self.classes)}
+        leafs = self.traverse(x)
         leaf = Counter(leafs).most_common(1)[0][0]
         proba.update(leaf.prediction(x, tree=self))
         return proba
