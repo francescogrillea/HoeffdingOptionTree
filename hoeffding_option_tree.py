@@ -43,20 +43,29 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
 
         logger.info(f"RootNode.class: {self._root.__class__.__name__}")
 
-        parent_node = None
-        current_node = None
+        active_nodes = self._root.traverse()
+        if len(active_nodes) == 0:
+            logger.info(f"Empty RootOptionNode.")
+            new_node = self._new_leaf()
+            new_node.learn_one(x, y, w=w, tree=self)
+            self._root.add_option_branch(new_node)
+            self._n_active_leaves = 1
 
-        # TODO sostituirlo con un while active nodes ?
-        for child in self._root.children:
-            current_node = child
+        i = 0
+        while True:
+
+            if i >= len(active_nodes):
+                break
+
+            self._subtree_root = active_nodes[i]
+            current_node = self._subtree_root
             parent_node = None
 
             # reach a leaf node
             # TODO - non riesce a gestire gli option branches, ma arriva fino alle foglie
             if isinstance(current_node, DTBranch):
-                # logger.info("Current node is a DTBranch")
-                path = iter(child.walk(x, until_leaf=False))
-                # logger.info(f"path found by walk: {path}")
+                logger.info("Current node is a DTBranch")
+                path = iter(current_node.walk(x, until_leaf=False))
                 while True:
                     aux = next(path, None)
                     if aux is None:
@@ -64,47 +73,32 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     parent_node = current_node
                     current_node = aux
 
-            # self._subtree_root = current_node
-
             if isinstance(current_node, HTLeaf):
-                # logger.info("Current node is a HTLeaf")
+                logger.info("Current node is a HTLeaf")
                 current_node.learn_one(x, y, w=w, tree=self)
                 p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
                 self._attempt_to_split(current_node, parent_node, p_branch)
-                # logger.info(f"Leaf.stats: {current_node.stats}")
+                logger.info(f"Leaf.stats: {current_node.stats}")
 
             # if L has no children -> add leaf node
             elif isinstance(current_node, OptionNode):
-                # logger.info("Current node is a OptionNode")
+                logger.info("Current node is a OptionNode")
                 if current_node.has_children():
-                    # logger.info("Attempt to add OptionBranch - TODO")
+                    logger.info("Attempt to add OptionBranch - TODO")
                     # TODO - attempt_to_split_option
                     pass
                 else:
-                    # logger.info("Attempt to add LeafNode")
+                    logger.info("Attempt to add LeafNode")
                     new_node = self._new_leaf()
                     new_node.learn_one(x, y, w=w, tree=self)
-                    # logger.info(f"Leaf.stats: {new_node.stats}")
-                    # self._root.add_option_branch(new_node)
-                    child.append(new_node)
-                    self._n_active_leaves = 1
-
-            # TODO - forse posso toglierlo perche' sopra walk until leaf
-            elif isinstance(current_node, DTBranch):
-                # logger.info("Current node is a DTBranch")
-                pass
+                    logger.info(f"Leaf.stats: {new_node.stats}")
+                    current_node.add_option_branch(new_node)
+                    self._n_active_leaves += 1
 
             else:
-                raise TypeError
+                raise TypeError(f"Type {type(current_node)} not supported.")
 
-        # if no option branches are present
-        # TODO - toglierlo non mi piace
-        if current_node is None:
-            new_node = self._new_leaf()
-            new_node.learn_one(x, y, w=w, tree=self)
-            # logger.info(f"No branches are present. New leaf created\t {new_node.stats}.")
-            self._root.add_option_branch(new_node)
-            self._n_active_leaves = 1
+            i += 1
 
     def traverse(self, x):
         active_nodes = [self._root]
@@ -173,8 +167,8 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     for poor_att in poor_atts:
                         leaf.disable_attribute(poor_att)
             if should_split:
-                print("SHOULD SPLIT")
                 split_decision = best_split_suggestions[-1]
+                logger.info(f"Should Split on attribute {split_decision.feature}")
                 if split_decision.feature is None:
                     # Pre-pruning - null wins
                     leaf.deactivate()
