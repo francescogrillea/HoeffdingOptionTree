@@ -1,4 +1,5 @@
-from collections import Counter
+import random
+from collections import Counter, deque
 import logging
 
 from river.tree import HoeffdingTreeClassifier
@@ -30,77 +31,122 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         # TODO - aggiornare tutte quelle varaibili della superclasse
 
         logger.info(f"New instance received. Class: {y}")
-        logger.info(self)
         # Updates the set of observed classes
         self.classes.add(y)
 
         self._train_weight_seen_by_model += w
 
         if self._root is None:
-            self._root = OptionNode()
-            self._n_active_leaves = 0
-
-        active_nodes = self._root.traverse()
-        if len(active_nodes) == 0:
-            logger.info(f"Empty RootOptionNode.")
-            new_node = self._new_leaf()
-            new_node.learn_one(x, y, w=w, tree=self)
-            self._root.add_option_branch(new_node)
+            self._root = self._new_leaf()
             self._n_active_leaves = 1
-            return
 
-        i = 0
-        while True:
+        current_node = self._root
+        parent_node = None
 
-            if i >= len(active_nodes):
-                break
-
-            self._subtree_root = active_nodes[i]
-            current_node = self._subtree_root
-            parent_node = None
-
-            # reach a leaf node
-            # TODO - non riesce a gestire gli option branches, ma arriva fino alle foglie
-            if isinstance(current_node, DTBranch):
-                logger.info("Current node is a DTBranch")
+        nodes_to_traverse = deque([current_node])
+        while nodes_to_traverse:
+            current_node = nodes_to_traverse.popleft()
+            if not isinstance(current_node, HTLeaf):
                 path = iter(current_node.walk(x, until_leaf=False))
                 while True:
                     aux = next(path, None)
+
                     if aux is None:
                         break
+                    if isinstance(aux, OptionNode):
+                        nodes_to_traverse.extend(aux.children)
+                        break
+                    if isinstance(aux, DTBranch):
+                        self._attempt_to_split_option(current_node) # che succede qua dentro?
+
                     parent_node = current_node
                     current_node = aux
 
             if isinstance(current_node, HTLeaf):
-                logger.info("Current node is a HTLeaf")
                 current_node.learn_one(x, y, w=w, tree=self)
                 if self._growth_allowed:
                     p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
                     self._attempt_to_split(current_node, parent_node, p_branch)
-                # logger.info(f"Leaf.stats: {current_node.stats}")
 
-            # if L has no children -> add leaf node
-            elif isinstance(current_node, OptionNode):
-                logger.info("Current node is a OptionNode")
-                if current_node.has_children():
-                    logger.info("Attempt to add OptionBranch - TODO")
-                    # TODO - attempt_to_split_option
-                    pass
-                else:
-                    logger.info("Attempt to add LeafNode")
-                    new_node = self._new_leaf()
-                    new_node.learn_one(x, y, w=w, tree=self)
-                    # logger.info(f"Leaf.stats: {new_node.stats}")
-                    current_node.add_option_branch(new_node)
-                    self._n_active_leaves += 1
 
-            else:
-                raise TypeError(f"Type {type(current_node)} not supported.")
-
-            active_nodes[i] = self._subtree_root
-            i += 1
-        logger.info(f"{self}\n")
-
+    # def _bck_learn_one(self, x, y, *, w=1.0):
+    #     # TODO - aggiornare tutte quelle varaibili della superclasse
+    #
+    #     logger.info(f"New instance received. Class: {y}")
+    #     logger.info(self)
+    #     # Updates the set of observed classes
+    #     self.classes.add(y)
+    #
+    #     self._train_weight_seen_by_model += w
+    #
+    #     if self._root is None:
+    #         self._root = OptionNode()
+    #         self._n_active_leaves = 0
+    #
+    #     # TODO - rivedere un attimo sta roba
+    #     active_nodes = self._root.traverse()
+    #     if len(active_nodes) == 0:
+    #         logger.info(f"Empty RootOptionNode.")
+    #         new_node = self._new_leaf()
+    #         new_node.learn_one(x, y, w=w, tree=self)
+    #         self._root.add_option_branch(new_node)
+    #         self._n_active_leaves = 1
+    #         return
+    #
+    #     i = 0
+    #     while True:
+    #
+    #         if i >= len(active_nodes):
+    #             break
+    #
+    #         self._subtree_root = active_nodes[i]
+    #         current_node = self._subtree_root
+    #         parent_node = None
+    #         # features_along_path = set() # TODO - qui va bene?
+    #
+    #         # reach a leaf node
+    #         # TODO - non riesce a gestire gli option branches, ma arriva fino alle foglie
+    #         if isinstance(current_node, DTBranch):
+    #             logger.info("Current node is a DTBranch")
+    #             path = iter(current_node.walk(x, until_leaf=False))
+    #             # features_along_path.add(current_node.feature)   # TODO - potrebbe non esserci?
+    #             while True:
+    #                 aux = next(path, None)
+    #                 if aux is None:
+    #                     break
+    #                 parent_node = current_node
+    #                 current_node = aux
+    #                 # features_along_path.add(current_node.feature)
+    #
+    #         if isinstance(current_node, HTLeaf):
+    #             logger.info("Current node is a HTLeaf")
+    #             current_node.learn_one(x, y, w=w, tree=self)
+    #             if self._growth_allowed:
+    #                 p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
+    #                 self._attempt_to_split(current_node, parent_node, p_branch)
+    #             # logger.info(f"Leaf.stats: {current_node.stats}")
+    #
+    #         # if L has no children -> add leaf node
+    #         elif isinstance(current_node, OptionNode):
+    #             logger.info("Current node is a OptionNode")
+    #             if current_node.has_children():
+    #                 logger.info("Attempt to add OptionBranch - TODO")
+    #                 # TODO - attempt_to_split_option -> consider the features_along_path
+    #                 pass
+    #             else:
+    #                 logger.info("Attempt to add LeafNode")
+    #                 new_node = self._new_leaf()
+    #                 new_node.learn_one(x, y, w=w, tree=self)
+    #                 # logger.info(f"Leaf.stats: {new_node.stats}")
+    #                 current_node.add_option_branch(new_node)
+    #                 self._n_active_leaves += 1
+    #
+    #         else:
+    #             raise TypeError(f"Type {type(current_node)} not supported.")
+    #
+    #         active_nodes[i] = self._subtree_root
+    #         i += 1
+    #     logger.info(f"{self}\n")
 
     def traverse(self, x):
         active_nodes = [self._root]
@@ -132,7 +178,6 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             proba.update(leaf.prediction(x, tree=self))
         return proba
 
-    # TODO - gestire il fatto di creare un option node
     def _attempt_to_split(self, leaf: HTLeaf, parent: DTBranch, parent_branch: int, **kwargs):
         if not leaf.observed_class_distribution_is_pure():  # type: ignore
 
@@ -192,9 +237,23 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     self._n_active_leaves -= 1
                     self._n_active_leaves += len(leaves)
                     if parent is None:
-                        self._subtree_root = new_split
+                        self._root = new_split
                     else:
                         parent.children[parent_branch] = new_split
 
                 # Manage memory
                 # self._enforce_size_limit()
+
+    def _attempt_to_split_option(self, current_node):
+        random.seed(123)
+        # if option node should be added
+        if random.uniform(0, 1) < 0.2:
+            if isinstance(current_node, DTBranch):
+                pass
+        #        current_node = OptionNode(initial_node=current_node)
+        #
+        #     if current_node.option_count() < self.max_options:
+        #         # compute the new split
+        #         option_node = DTBranch(None, None)
+        #         current_node.add_option_branch(option_node)
+        return
