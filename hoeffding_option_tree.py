@@ -28,7 +28,6 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         self._subtree_root: DTBranch | HTLeaf = None
 
     def learn_one(self, x, y, *, w=1.0):
-        # TODO - aggiornare tutte quelle varaibili della superclasse
 
         logger.info(f"New instance received. Class: {y}")
         # Updates the set of observed classes
@@ -42,6 +41,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
 
         current_node = self._root
         parent_node = None
+        accumulated_features = []
 
         nodes_to_traverse = deque([current_node])
         while nodes_to_traverse:
@@ -57,7 +57,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                         nodes_to_traverse.extend(aux.children)
                         break
                     if isinstance(aux, DTBranch):
-                        self._attempt_to_split_option(current_node) # che succede qua dentro?
+                        self._attempt_to_split_option(current_node, accumulated_features)
 
                     parent_node = current_node
                     current_node = aux
@@ -67,86 +67,6 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                 if self._growth_allowed:
                     p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
                     self._attempt_to_split(current_node, parent_node, p_branch)
-
-
-    # def _bck_learn_one(self, x, y, *, w=1.0):
-    #     # TODO - aggiornare tutte quelle varaibili della superclasse
-    #
-    #     logger.info(f"New instance received. Class: {y}")
-    #     logger.info(self)
-    #     # Updates the set of observed classes
-    #     self.classes.add(y)
-    #
-    #     self._train_weight_seen_by_model += w
-    #
-    #     if self._root is None:
-    #         self._root = OptionNode()
-    #         self._n_active_leaves = 0
-    #
-    #     # TODO - rivedere un attimo sta roba
-    #     active_nodes = self._root.traverse()
-    #     if len(active_nodes) == 0:
-    #         logger.info(f"Empty RootOptionNode.")
-    #         new_node = self._new_leaf()
-    #         new_node.learn_one(x, y, w=w, tree=self)
-    #         self._root.add_option_branch(new_node)
-    #         self._n_active_leaves = 1
-    #         return
-    #
-    #     i = 0
-    #     while True:
-    #
-    #         if i >= len(active_nodes):
-    #             break
-    #
-    #         self._subtree_root = active_nodes[i]
-    #         current_node = self._subtree_root
-    #         parent_node = None
-    #         # features_along_path = set() # TODO - qui va bene?
-    #
-    #         # reach a leaf node
-    #         # TODO - non riesce a gestire gli option branches, ma arriva fino alle foglie
-    #         if isinstance(current_node, DTBranch):
-    #             logger.info("Current node is a DTBranch")
-    #             path = iter(current_node.walk(x, until_leaf=False))
-    #             # features_along_path.add(current_node.feature)   # TODO - potrebbe non esserci?
-    #             while True:
-    #                 aux = next(path, None)
-    #                 if aux is None:
-    #                     break
-    #                 parent_node = current_node
-    #                 current_node = aux
-    #                 # features_along_path.add(current_node.feature)
-    #
-    #         if isinstance(current_node, HTLeaf):
-    #             logger.info("Current node is a HTLeaf")
-    #             current_node.learn_one(x, y, w=w, tree=self)
-    #             if self._growth_allowed:
-    #                 p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
-    #                 self._attempt_to_split(current_node, parent_node, p_branch)
-    #             # logger.info(f"Leaf.stats: {current_node.stats}")
-    #
-    #         # if L has no children -> add leaf node
-    #         elif isinstance(current_node, OptionNode):
-    #             logger.info("Current node is a OptionNode")
-    #             if current_node.has_children():
-    #                 logger.info("Attempt to add OptionBranch - TODO")
-    #                 # TODO - attempt_to_split_option -> consider the features_along_path
-    #                 pass
-    #             else:
-    #                 logger.info("Attempt to add LeafNode")
-    #                 new_node = self._new_leaf()
-    #                 new_node.learn_one(x, y, w=w, tree=self)
-    #                 # logger.info(f"Leaf.stats: {new_node.stats}")
-    #                 current_node.add_option_branch(new_node)
-    #                 self._n_active_leaves += 1
-    #
-    #         else:
-    #             raise TypeError(f"Type {type(current_node)} not supported.")
-    #
-    #         active_nodes[i] = self._subtree_root
-    #         i += 1
-    #     logger.info(f"{self}\n")
 
     def traverse(self, x):
         active_nodes = [self._root]
@@ -198,8 +118,8 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                 best_suggestion = best_split_suggestions[-1]
                 second_best_suggestion = best_split_suggestions[-2]
                 if (
-                    best_suggestion.merit - second_best_suggestion.merit > hoeffding_bound
-                    or hoeffding_bound < self.tau
+                        best_suggestion.merit - second_best_suggestion.merit > hoeffding_bound
+                        or hoeffding_bound < self.tau
                 ):
                     should_split = True
                 if self.remove_poor_attrs:
@@ -207,8 +127,8 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     # Add any poor attribute to set
                     for suggestion in best_split_suggestions:
                         if (
-                            suggestion.feature
-                            and best_suggestion.merit - suggestion.merit > hoeffding_bound
+                                suggestion.feature
+                                and best_suggestion.merit - suggestion.merit > hoeffding_bound
                         ):
                             poor_atts.add(suggestion.feature)
                     for poor_att in poor_atts:
@@ -241,10 +161,8 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     else:
                         parent.children[parent_branch] = new_split
 
-                # Manage memory
-                # self._enforce_size_limit()
-
-    def _attempt_to_split_option(self, current_node):
+    def _attempt_to_split_option(self, current_node, accumulated_features):
+        # pass the current_node variable by assignment, in order to transform it into a OptionNode
         random.seed(123)
         # if option node should be added
         if random.uniform(0, 1) < 0.2:
