@@ -1,4 +1,5 @@
 from collections import Counter
+import logging
 
 from river.tree.splitter import GaussianSplitter
 from river.tree.nodes.htc_nodes import LeafMajorityClass, LeafNaiveBayes, LeafNaiveBayesAdaptive
@@ -6,6 +7,14 @@ from river.tree import HoeffdingTreeClassifier
 from river.tree.nodes.leaf import HTLeaf
 from river.tree.nodes.branch import DTBranch
 from option_node import OptionNode
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[in %(funcName)s] %(message)s'
+)
+
+logger = logging.getLogger(__name__)
+
 
 class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
     """ Hoeffding Option Tree classifier.
@@ -20,8 +29,10 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         self._subtree_root: DTBranch | HTLeaf = None
 
     def learn_one(self, x, y, *, w=1.0):
+        # TODO - aggiornare tutte quelle varaibili della superclasse
+
+        logger.info(f"New instance received. Class: {y}")
         # Updates the set of observed classes
-        print(f"Model received input x and label y={y}")
         self.classes.add(y)
 
         self._train_weight_seen_by_model += w
@@ -30,19 +41,22 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             self._root = OptionNode()
             self._n_active_leaves = 0
 
-        print(f"Root Class: {self._root.__class__.__name__}")
+        logger.info(f"RootNode.class: {self._root.__class__.__name__}")
 
         parent_node = None
         current_node = None
 
+        # TODO sostituirlo con un while active nodes ?
         for child in self._root.children:
             current_node = child
             parent_node = None
 
+            # reach a leaf node
+            # TODO - non riesce a gestire gli option branches, ma arriva fino alle foglie
             if isinstance(current_node, DTBranch):
-                print(f"Current node is a DTBranch")
+                # logger.info("Current node is a DTBranch")
                 path = iter(child.walk(x, until_leaf=False))
-                print(path)
+                # logger.info(f"path found by walk: {path}")
                 while True:
                     aux = next(path, None)
                     if aux is None:
@@ -50,29 +64,45 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     parent_node = current_node
                     current_node = aux
 
-            self._subtree_root = current_node
+            # self._subtree_root = current_node
 
             if isinstance(current_node, HTLeaf):
-                print(f"Current node is a HTLeaf")
+                # logger.info("Current node is a HTLeaf")
                 current_node.learn_one(x, y, w=w, tree=self)
                 p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
                 self._attempt_to_split(current_node, parent_node, p_branch)
-                print(f"Current node after learn_one: {current_node.stats}")
-                # TODO - ci deve essere un attempts to option?
+                # logger.info(f"Leaf.stats: {current_node.stats}")
 
+            # if L has no children -> add leaf node
             elif isinstance(current_node, OptionNode):
-                print(f"Current node is a OptionNode")
-                # TODO - che devo fare?
+                # logger.info("Current node is a OptionNode")
+                if current_node.has_children():
+                    # logger.info("Attempt to add OptionBranch - TODO")
+                    # TODO - attempt_to_split_option
+                    pass
+                else:
+                    # logger.info("Attempt to add LeafNode")
+                    new_node = self._new_leaf()
+                    new_node.learn_one(x, y, w=w, tree=self)
+                    # logger.info(f"Leaf.stats: {new_node.stats}")
+                    # self._root.add_option_branch(new_node)
+                    child.append(new_node)
+                    self._n_active_leaves = 1
+
+            # TODO - forse posso toglierlo perche' sopra walk until leaf
             elif isinstance(current_node, DTBranch):
-                print(f"Current node is a DTBranch")
+                # logger.info("Current node is a DTBranch")
+                pass
+
             else:
                 raise TypeError
 
         # if no option branches are present
+        # TODO - toglierlo non mi piace
         if current_node is None:
             new_node = self._new_leaf()
             new_node.learn_one(x, y, w=w, tree=self)
-            print(f"No branches are present. New leaf created\t {new_node.stats}.")
+            # logger.info(f"No branches are present. New leaf created\t {new_node.stats}.")
             self._root.add_option_branch(new_node)
             self._n_active_leaves = 1
 
@@ -82,8 +112,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         while len(active_nodes) > 0:
             starting_node = active_nodes.pop(0)
             if isinstance(starting_node, OptionNode):
-                active_nodes.append(starting_node.traverse())
-            # TODO - non mi torna come fa a richiamare la traverse su un option node visto che arriva alla foglia!
+                active_nodes += starting_node.traverse()
             elif isinstance(starting_node, DTBranch):
                 node = starting_node.traverse(x, until_leaf=False)
                 while isinstance(node, DTBranch):
@@ -93,16 +122,18 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     active_nodes.append(node)
                 elif isinstance(node, HTLeaf):
                     leafs.append(node)
+            elif isinstance(starting_node, HTLeaf):
+                leafs.append(starting_node)
             else:
-                leaf = starting_node
-                leafs.append(leaf)
+                raise TypeError(f"Type {type(starting_node)} not supported")
         return leafs
 
     def predict_proba_one(self, x):
         proba = {c: 0.0 for c in sorted(self.classes)}
-        leafs = self.traverse(x)
-        leaf = Counter(leafs).most_common(1)[0][0]
-        proba.update(leaf.prediction(x, tree=self))
+        if self._root is not None:
+            leafs = self.traverse(x)
+            leaf = Counter(leafs).most_common(1)[0][0]
+            proba.update(leaf.prediction(x, tree=self))
         return proba
 
     # TODO - gestire il fatto di creare un option node

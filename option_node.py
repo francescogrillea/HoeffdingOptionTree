@@ -13,5 +13,8 @@ class OptionNode:
     def add_option_branch(self, x: DTBranch | HTLeaf) -> None:
         self.children.append(x)
 
+    def has_children(self):
+        return len(self.children) > 0
+
     def traverse(self, mode="first"):
         return self.children
