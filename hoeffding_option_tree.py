@@ -1,8 +1,6 @@
 from collections import Counter
 import logging
 
-from river.tree.splitter import GaussianSplitter
-from river.tree.nodes.htc_nodes import LeafMajorityClass, LeafNaiveBayes, LeafNaiveBayesAdaptive
 from river.tree import HoeffdingTreeClassifier
 from river.tree.nodes.leaf import HTLeaf
 from river.tree.nodes.branch import DTBranch
@@ -32,6 +30,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         # TODO - aggiornare tutte quelle varaibili della superclasse
 
         logger.info(f"New instance received. Class: {y}")
+        logger.info(self)
         # Updates the set of observed classes
         self.classes.add(y)
 
@@ -41,8 +40,6 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             self._root = OptionNode()
             self._n_active_leaves = 0
 
-        logger.info(f"RootNode.class: {self._root.__class__.__name__}")
-
         active_nodes = self._root.traverse()
         if len(active_nodes) == 0:
             logger.info(f"Empty RootOptionNode.")
@@ -50,6 +47,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             new_node.learn_one(x, y, w=w, tree=self)
             self._root.add_option_branch(new_node)
             self._n_active_leaves = 1
+            return
 
         i = 0
         while True:
@@ -76,9 +74,10 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             if isinstance(current_node, HTLeaf):
                 logger.info("Current node is a HTLeaf")
                 current_node.learn_one(x, y, w=w, tree=self)
-                p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
-                self._attempt_to_split(current_node, parent_node, p_branch)
-                logger.info(f"Leaf.stats: {current_node.stats}")
+                if self._growth_allowed:
+                    p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
+                    self._attempt_to_split(current_node, parent_node, p_branch)
+                # logger.info(f"Leaf.stats: {current_node.stats}")
 
             # if L has no children -> add leaf node
             elif isinstance(current_node, OptionNode):
@@ -91,14 +90,17 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     logger.info("Attempt to add LeafNode")
                     new_node = self._new_leaf()
                     new_node.learn_one(x, y, w=w, tree=self)
-                    logger.info(f"Leaf.stats: {new_node.stats}")
+                    # logger.info(f"Leaf.stats: {new_node.stats}")
                     current_node.add_option_branch(new_node)
                     self._n_active_leaves += 1
 
             else:
                 raise TypeError(f"Type {type(current_node)} not supported.")
 
+            active_nodes[i] = self._subtree_root
             i += 1
+        logger.info(f"{self}\n")
+
 
     def traverse(self, x):
         active_nodes = [self._root]
@@ -169,12 +171,13 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             if should_split:
                 split_decision = best_split_suggestions[-1]
                 logger.info(f"Should Split on attribute {split_decision.feature}")
-                if split_decision.feature is None:
-                    # Pre-pruning - null wins
-                    leaf.deactivate()
-                    self._n_inactive_leaves += 1
-                    self._n_active_leaves -= 1
-                else:
+                # if split_decision.feature is None:
+                #     # Pre-pruning - null wins
+                #     leaf.deactivate()
+                #     self._n_inactive_leaves += 1
+                #     self._n_active_leaves -= 1
+                # else:
+                if split_decision.feature is not None:
                     branch = self._branch_selector(
                         split_decision.numerical_feature, split_decision.multiway_split
                     )
@@ -186,7 +189,6 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     new_split = split_decision.assemble(
                         branch, leaf.stats, leaf.depth, *leaves, **kwargs
                     )
-
                     self._n_active_leaves -= 1
                     self._n_active_leaves += len(leaves)
                     if parent is None:
