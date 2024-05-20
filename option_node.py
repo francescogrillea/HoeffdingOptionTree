@@ -5,8 +5,11 @@ from river.tree.nodes.branch import DTBranch
 class OptionNode:
     _traverse_mode = ["first", "all"]
 
-    def __init__(self):
-        self.children = []  # TODO - valutare se metterla private
+    def __init__(self, initial_node: DTBranch = None):
+        if initial_node is None:
+            self.children = []  # TODO - valutare se metterla private
+        else:
+            self.children = [initial_node]
         self.used_attributes = []        # TODO - capire come fare in modo di salvarsi gli attributi dei parents
         self.bestG = 0  # TODO - trasformarlo in un property?
 

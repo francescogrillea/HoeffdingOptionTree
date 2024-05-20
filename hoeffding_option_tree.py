@@ -38,26 +38,30 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         if self._root is None:
             self._root = self._new_leaf()
             self._n_active_leaves = 1
+            #TO eliminate
+            return
 
         current_node = self._root
         parent_node = None
-        accumulated_features = []
+        #
 
         nodes_to_traverse = deque([current_node])
         while nodes_to_traverse:
             current_node = nodes_to_traverse.popleft()
             if not isinstance(current_node, HTLeaf):
+                logger.info(f"CurrentNode: {current_node.__class__.__name__}")
                 path = iter(current_node.walk(x, until_leaf=False))
                 while True:
                     aux = next(path, None)
 
                     if aux is None:
                         break
-                    if isinstance(aux, OptionNode):
-                        nodes_to_traverse.extend(aux.children)
-                        break
                     if isinstance(aux, DTBranch):
-                        self._attempt_to_split_option(current_node, accumulated_features)
+                        p_branch = aux.branch_no(x)
+                        self._attempt_to_split_option(aux, parent_node, p_branch)
+                    if isinstance(aux, OptionNode):
+                         nodes_to_traverse.extend(aux.children)
+                         break
 
                     parent_node = current_node
                     current_node = aux
@@ -150,9 +154,16 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                         self._new_leaf(initial_stats, parent=leaf)
                         for initial_stats in split_decision.children_stats  # type: ignore
                     )
+                    # inject the split_info to each branch
+                    accumulated_features = set()
+                    accumulated_features.add(split_decision.feature)
+                    if parent is not None and hasattr(parent, "accumulated_features"):
+                        accumulated_features.update(parent.accumulated_features)
 
                     new_split = split_decision.assemble(
-                        branch, leaf.stats, leaf.depth, *leaves, **kwargs
+                        branch, leaf.stats, leaf.depth, *leaves, **kwargs,
+                        # TODO - check if is split_info or merit
+                        split_info=split_decision.split_info, accumulated_features=accumulated_features
                     )
                     self._n_active_leaves -= 1
                     self._n_active_leaves += len(leaves)
@@ -161,17 +172,26 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     else:
                         parent.children[parent_branch] = new_split
 
-    def _attempt_to_split_option(self, current_node, accumulated_features):
+    def _attempt_to_split_option(self, current_node: DTBranch, parent: DTBranch | OptionNode, parent_branch: int, **kwargs):
+        # if leaf class distribution is not pure
         # pass the current_node variable by assignment, in order to transform it into a OptionNode
-        random.seed(123)
-        # if option node should be added
-        if random.uniform(0, 1) < 0.2:
-            if isinstance(current_node, DTBranch):
-                pass
-        #        current_node = OptionNode(initial_node=current_node)
-        #
-        #     if current_node.option_count() < self.max_options:
-        #         # compute the new split
-        #         option_node = DTBranch(None, None)
-        #         current_node.add_option_branch(option_node)
-        return
+        should_split = True
+        if isinstance(parent, OptionNode):
+            should_split = parent.option_count() < self.max_options
+
+        if should_split:
+            random.seed(123)
+            # if option node should be added
+            if random.uniform(0, 1) < 0.2:
+                option_node = OptionNode(initial_node=current_node)
+                # compute new branch -> split on 2nd best attribute
+                # new_branch_type = self._branch_selector()
+                # logger.info(f"{new_branch_type}")
+                # option_node.add_option_branch()
+
+                if parent is None:
+                    logger.info("Splitting RootNode in OptionNode")
+                    self._root = option_node
+                else:
+                    logger.info("Splitting GenericNode in OptionNode")
+                    parent.children[parent_branch] = option_node
