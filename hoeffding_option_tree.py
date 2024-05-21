@@ -23,48 +23,49 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         super().__init__(**kwargs)
         self.delta_prime = delta_prime
         self.max_options = max_options
+        self.count = 0
 
         self._root: DTBranch | HTLeaf | OptionNode = None
         self._subtree_root: DTBranch | HTLeaf = None
 
     def learn_one(self, x, y, *, w=1.0):
 
-        logger.info(f"New instance received. Class: {y}")
+        self.count += 1
+        logger.info(f"{self.count}\tNew instance received. Class: {y}")
         # Updates the set of observed classes
         self.classes.add(y)
 
         self._train_weight_seen_by_model += w
 
         if self._root is None:
-            self._root = self._new_leaf()
+            new_node = self._new_leaf()
+            new_node.learn_one(x, y, w=w, tree=self)
+            self._root = new_node
             self._n_active_leaves = 1
-            #TO eliminate
+            # TO eliminate
             return
 
         current_node = self._root
         parent_node = None
         #
 
-        nodes_to_traverse = deque([current_node])
+        nodes_to_traverse = deque()
+        if isinstance(current_node, OptionNode):
+            nodes_to_traverse.extend(current_node.children)
+        else:
+            nodes_to_traverse.append(current_node)
+
         while nodes_to_traverse:
             current_node = nodes_to_traverse.popleft()
-            if not isinstance(current_node, HTLeaf):
-                logger.info(f"CurrentNode: {current_node.__class__.__name__}")
-                path = iter(current_node.walk(x, until_leaf=False))
-                while True:
-                    aux = next(path, None)
+            while isinstance(current_node, DTBranch):
+                p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
 
-                    if aux is None:
-                        break
-                    if isinstance(aux, DTBranch):
-                        p_branch = aux.branch_no(x)
-                        self._attempt_to_split_option(aux, parent_node, p_branch)
-                    if isinstance(aux, OptionNode):
-                         nodes_to_traverse.extend(aux.children)
-                         break
+                self._attempt_to_split_option(x, y, w, current_node, parent_node, p_branch)
+                parent_node = current_node
+                current_node = current_node.next(x)
 
-                    parent_node = current_node
-                    current_node = aux
+            if isinstance(current_node, OptionNode):
+                nodes_to_traverse.extend(current_node.children)
 
             if isinstance(current_node, HTLeaf):
                 current_node.learn_one(x, y, w=w, tree=self)
@@ -78,16 +79,17 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         while len(active_nodes) > 0:
             starting_node = active_nodes.pop(0)
             if isinstance(starting_node, OptionNode):
-                active_nodes += starting_node.traverse()
+                active_nodes += starting_node.children
             elif isinstance(starting_node, DTBranch):
-                node = starting_node.traverse(x, until_leaf=False)
+                node = starting_node.next(x)
                 while isinstance(node, DTBranch):
-                    # TODO - provare a vedere se mettendo until_leaf=True posso recuperare l'ultimo prima delll'eccezione
-                    node = starting_node.traverse(x, until_leaf=False)
+                    node = node.next(x)
+
                 if isinstance(node, OptionNode):
-                    active_nodes.append(node)
+                    active_nodes += node.children
                 elif isinstance(node, HTLeaf):
                     leafs.append(node)
+
             elif isinstance(starting_node, HTLeaf):
                 leafs.append(starting_node)
             else:
@@ -97,7 +99,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
     def predict_proba_one(self, x):
         proba = {c: 0.0 for c in sorted(self.classes)}
         if self._root is not None:
-            leafs = self.traverse(x)
+            leafs = self.traverse(x)  # TODO - errore qui
             leaf = Counter(leafs).most_common(1)[0][0]
             proba.update(leaf.prediction(x, tree=self))
         return proba
@@ -162,9 +164,9 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
 
                     new_split = split_decision.assemble(
                         branch, leaf.stats, leaf.depth, *leaves, **kwargs,
-                        # TODO - check if is split_info or merit
-                        split_info=split_decision.split_info, accumulated_features=accumulated_features
-                    )
+                        split_info=split_decision.split_info,
+                        accumulated_features=accumulated_features)  # TODO - check if is split_info or merit
+
                     self._n_active_leaves -= 1
                     self._n_active_leaves += len(leaves)
                     if parent is None:
@@ -172,7 +174,8 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     else:
                         parent.children[parent_branch] = new_split
 
-    def _attempt_to_split_option(self, current_node: DTBranch, parent: DTBranch | OptionNode, parent_branch: int, **kwargs):
+    def _attempt_to_split_option(self, x, y, w, current_node: DTBranch, parent: DTBranch | OptionNode,
+                                 parent_branch: int, **kwargs):
         # if leaf class distribution is not pure
         # pass the current_node variable by assignment, in order to transform it into a OptionNode
         should_split = True
@@ -182,16 +185,22 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         if should_split:
             random.seed(123)
             # if option node should be added
-            if random.uniform(0, 1) < 0.2:
-                option_node = OptionNode(initial_node=current_node)
-                # compute new branch -> split on 2nd best attribute
-                # new_branch_type = self._branch_selector()
-                # logger.info(f"{new_branch_type}")
-                # option_node.add_option_branch()
+            if random.uniform(0, 1) < 0.07:  # TODO - cambiare
+                logger.info("Should Split on OptionNode")
 
-                if parent is None:
-                    logger.info("Splitting RootNode in OptionNode")
-                    self._root = option_node
+                # TODO - non sono sicuro debba mettere la nuova foglia
+                new_node = self._new_leaf()
+                new_node.learn_one(x, y, w=w, tree=self)
+
+                # append the new branch to the option node above
+                if isinstance(parent, OptionNode):
+                    parent.add_option_branch(new_node)
+                # create a new option node with two branches
                 else:
-                    logger.info("Splitting GenericNode in OptionNode")
-                    parent.children[parent_branch] = option_node
+                    option_node = OptionNode(initial_node=current_node)
+                    option_node.add_option_branch(new_node)
+
+                    if parent is None:
+                        self._root = option_node
+                    else:
+                        parent.children[parent_branch] = option_node
