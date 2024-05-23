@@ -71,8 +71,13 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             if isinstance(current_node, HTLeaf):
                 current_node.learn_one(x, y, w=w, tree=self)
                 if self._growth_allowed:
-                    p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
-                    self._attempt_to_split(current_node, parent_node, p_branch)
+                    weight_seen = current_node.total_weight
+                    weight_diff = weight_seen - current_node.last_split_attempt_at
+                    if weight_diff >= self.grace_period:
+                        p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
+                        self._attempt_to_split(current_node, parent_node, p_branch)
+                        current_node.last_split_attempt_at = weight_seen
+
 
     def traverse(self, x):
 
