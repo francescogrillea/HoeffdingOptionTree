@@ -51,6 +51,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
 
         nodes_to_traverse = deque()
         if isinstance(current_node, OptionNode):
+            parent_node = current_node
             nodes_to_traverse.extend(current_node.children)
         else:
             nodes_to_traverse.append(current_node)
@@ -74,7 +75,14 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     self._attempt_to_split(current_node, parent_node, p_branch)
 
     def traverse(self, x):
-        active_nodes = [self._root]
+
+        active_nodes = []
+
+        if isinstance(self._root, OptionNode):
+            active_nodes += self._root.children
+        else:
+            active_nodes += [self._root]
+
         leafs = []
         while len(active_nodes) > 0:
             starting_node = active_nodes.pop(0)
@@ -185,10 +193,10 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         if should_split:
             random.seed(123)
             # if option node should be added
-            if random.uniform(0, 1) < 0.07:  # TODO - cambiare
-                logger.info("Should Split on OptionNode")
+            if random.random() < 0.07:  # TODO - cambiare
+                logger.info(f"Should Split on OptionNode on {current_node.feature}")
 
-                # TODO - non sono sicuro debba mettere la nuova foglia
+                # TODO - non va aggiunta una foglia ma un DTBranch
                 new_node = self._new_leaf()
                 new_node.learn_one(x, y, w=w, tree=self)
 
