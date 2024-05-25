@@ -24,9 +24,9 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         self.delta_prime = delta_prime
         self.max_options = max_options
         self.count = 0
+        self.buffer = []
 
         self._root: DTBranch | HTLeaf | OptionNode = None
-        self._subtree_root: DTBranch | HTLeaf = None
 
     def learn_one(self, x, y, *, w=1.0):
 
@@ -38,35 +38,33 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         self._train_weight_seen_by_model += w
 
         if self._root is None:
-            new_node = self._new_leaf()
-            new_node.learn_one(x, y, w=w, tree=self)
-            self._root = new_node
-            self._n_active_leaves = 1
-            # TO eliminate
-            return
-
-        current_node = self._root
-        parent_node = None
-        #
+            current_node = self._new_leaf()
+            self._root = OptionNode(self.max_options,
+                                    initial_node=current_node)
 
         nodes_to_traverse = deque()
-        if isinstance(current_node, OptionNode):
-            parent_node = current_node
-            nodes_to_traverse.extend(current_node.children)
+        if isinstance(self._root, OptionNode):  # sempre true ?
+            for child in self._root.children:
+                nodes_to_traverse.append((child, self._root))
         else:
-            nodes_to_traverse.append(current_node)
+            nodes_to_traverse.append((self._root, None))
 
+        # traverse until leaf(s)
         while nodes_to_traverse:
-            current_node = nodes_to_traverse.popleft()
+            current_node, parent_node = nodes_to_traverse.popleft()
             while isinstance(current_node, DTBranch):
                 p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
 
-                self._attempt_to_split_option(x, y, w, current_node, parent_node, p_branch)
+                # self._attempt_to_split_option(x, y, w, current_node, parent_node, p_branch)
+
                 parent_node = current_node
                 current_node = current_node.next(x)
 
             if isinstance(current_node, OptionNode):
-                nodes_to_traverse.extend(current_node.children)
+                for child in current_node.children:
+                    nodes_to_traverse.append((child, current_node))
+                # nodes_to_traverse.extend(current_node.children)
+                self._attempt_to_split_option(current_node, parent_node)
 
             if isinstance(current_node, HTLeaf):
                 current_node.learn_one(x, y, w=w, tree=self)
@@ -77,7 +75,6 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                         p_branch = parent_node.branch_no(x) if isinstance(parent_node, DTBranch) else None
                         self._attempt_to_split(current_node, parent_node, p_branch)
                         current_node.last_split_attempt_at = weight_seen
-
 
     def traverse(self, x):
 
@@ -112,144 +109,183 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
     def predict_proba_one(self, x):
         proba = {c: 0.0 for c in sorted(self.classes)}
         if self._root is not None:
-            leafs = self.traverse(x)  # TODO - errore qui
+            leafs = self.traverse(x)
             leaf = Counter(leafs).most_common(1)[0][0]
             proba.update(leaf.prediction(x, tree=self))
         return proba
 
-    def _attempt_to_split(self, leaf: HTLeaf, parent: DTBranch, parent_branch: int, **kwargs):
+    def _attempt_to_split(self, leaf: HTLeaf, parent: DTBranch | OptionNode, parent_branch: int, **kwargs):
+
         if not leaf.observed_class_distribution_is_pure():  # type: ignore
 
             split_criterion = self._new_split_criterion()
-
             best_split_suggestions = leaf.best_split_suggestions(split_criterion, self)
             best_split_suggestions.sort()
             should_split = False
-            if len(best_split_suggestions) < 2:
-                should_split = len(best_split_suggestions) > 0
-            else:
-                hoeffding_bound = self._hoeffding_bound(
-                    split_criterion.range_of_merit(leaf.stats),
-                    self.delta,
-                    leaf.total_weight,
-                )
 
-                best_suggestion = best_split_suggestions[-1]
-                second_best_suggestion = best_split_suggestions[-2]
-                if (
-                        best_suggestion.merit - second_best_suggestion.merit > hoeffding_bound
-                        or hoeffding_bound < self.tau
-                ):
-                    should_split = True
-                if self.remove_poor_attrs:
-                    poor_atts = set()
-                    # Add any poor attribute to set
-                    for suggestion in best_split_suggestions:
-                        if (
-                                suggestion.feature
-                                and best_suggestion.merit - suggestion.merit > hoeffding_bound
-                        ):
-                            poor_atts.add(suggestion.feature)
-                    for poor_att in poor_atts:
-                        leaf.disable_attribute(poor_att)
-            if should_split:
-                split_decision = best_split_suggestions[-1]
-                logger.info(f"Should Split on attribute {split_decision.feature}")
-                # logger.info(f"LeafNode: {leaf.stats}")
-                # logger.info(f"ParentNode: {parent.feature if isinstance(parent, DTBranch) else parent.__class__.__name__}")
-                # if split_decision.feature is None:
-                #     # Pre-pruning - null wins
-                #     leaf.deactivate()
-                #     self._n_inactive_leaves += 1
-                #     self._n_active_leaves -= 1
-                # else:
-                if split_decision.feature is not None:
-                    branch = self._branch_selector(
-                        split_decision.numerical_feature, split_decision.multiway_split
-                    )
-                    leaves = tuple(
-                        self._new_leaf(initial_stats, parent=leaf)
-                        for initial_stats in split_decision.children_stats  # type: ignore
-                    )
-                    # inject the split_info to each branch
-                    accumulated_features = set()
-                    accumulated_features.add(split_decision.feature)
-                    if parent is not None and hasattr(parent, "accumulated_features"):
-                        accumulated_features.update(parent.accumulated_features)
+            # CASO 1 -> 2
+            if isinstance(parent, OptionNode) and parent.has_only_leaf():
 
-                    new_split = split_decision.assemble(
-                        branch, leaf.stats, leaf.depth, *leaves, **kwargs,
-                        merit=split_decision.merit,
-                        accumulated_features=accumulated_features)  # TODO - check if is split_info or merit
+                parent_branch = 0
+                hoeffding_bound = -1
 
-                    self._n_active_leaves -= 1
-                    self._n_active_leaves += len(leaves)
-                    if parent is None:
-                        self._root = new_split
-                    else:
-                        parent.children[parent_branch] = new_split
-
-    def _attempt_to_split_option(self, x, y, w, current_node: DTBranch, parent: DTBranch | OptionNode,
-                                 parent_branch: int, **kwargs):
-        # if leaf class distribution is not pure
-        # pass the current_node variable by assignment, in order to transform it into a OptionNode
-        should_split = True
-        if isinstance(parent, OptionNode):
-            should_split = parent.option_count() < self.max_options
-
-        if should_split:
-            split_criterion = self._new_split_criterion()
-
-            new_leaf = self._new_leaf()
-            new_leaf.learn_one(x, y, w=w, tree=self)
-            accumulated_features = []
-
-            best_split_suggestions = new_leaf.best_split_suggestions(split_criterion, self) # problema
-            logger.info(best_split_suggestions)
-            best_split_suggestions = [b for b in best_split_suggestions if b not in accumulated_features]
-            best_split_suggestions.sort()
-
-            split_decision = best_split_suggestions[-1]
-            if split_decision.feature is not None:
-                logger.info(f"Adding {new_leaf.stats} to OptionBranch")
-                g_x = split_decision.split_info
-                g_s = parent.bestG if isinstance(parent, OptionNode) else 0
-                hoeffding_bound = self._hoeffding_bound(
-                    split_criterion.range_of_merit(new_leaf.stats),
-                    self.delta,
-                    new_leaf.total_weight,
-                )
-                logger.info({g_s})
-
-                if g_x - g_s > hoeffding_bound:
-
-                # random.seed(123)  # Note: nice comparison between random split and hoeffding bound split
-                # if random.random() < 0.07:
-                    logger.info(f"Creating OptionNode for node {current_node.feature}, parent: {parent.feature if isinstance(parent, DTBranch) else parent.__class__.__name__}")
-
-                    branch_type = self._branch_selector(
-                        split_decision.numerical_feature, split_decision.multiway_split
+                if len(best_split_suggestions) < 2:
+                    should_split = len(best_split_suggestions) > 0
+                else:
+                    hoeffding_bound = self._hoeffding_bound(
+                        split_criterion.range_of_merit(leaf.stats),
+                        self.delta,
+                        leaf.total_weight,
                     )
 
-                    leaves = tuple(
-                        self._new_leaf(initial_stats, parent=new_leaf)
-                        for initial_stats in split_decision.children_stats  # type: ignore
-                    )
+                    best_suggestion = best_split_suggestions[-1]
+                    second_best_suggestion = best_split_suggestions[-2]
+                    if (
+                            best_suggestion.merit - second_best_suggestion.merit > hoeffding_bound
+                            or hoeffding_bound < self.tau
+                    ):
+                        should_split = True
+                    if self.remove_poor_attrs:
+                        poor_atts = set()
+                        # Add any poor attribute to set
+                        for suggestion in best_split_suggestions:
+                            if (
+                                    suggestion.feature
+                                    and best_suggestion.merit - suggestion.merit > hoeffding_bound
+                            ):
+                                poor_atts.add(suggestion.feature)
+                        for poor_att in poor_atts:
+                            leaf.disable_attribute(poor_att)
+                if should_split:
+                    split_decision = best_split_suggestions[-1]
+                    logger.info(
+                        f"Split on {split_decision.feature}\t Parent: {parent.feature if isinstance(parent, DTBranch) else parent.__class__.__name__}")
+                    # logger.info(f"LeafNode: {leaf.stats}")
+                    # logger.info(f"ParentNode: {parent.feature if isinstance(parent, DTBranch) else parent.__class__.__name__}")
+                    # if split_decision.feature is None:
+                    #     # Pre-pruning - null wins
+                    #     leaf.deactivate()
+                    #     self._n_inactive_leaves += 1
+                    #     self._n_active_leaves -= 1
+                    # else:
+                    if split_decision.feature is not None:
+                        branch = self._branch_selector(
+                            split_decision.numerical_feature, split_decision.multiway_split
+                        )
+                        leaves = tuple(
+                            self._new_leaf(initial_stats, parent=leaf)
+                            for initial_stats in split_decision.children_stats  # type: ignore
+                        )
 
-                    new_branch = split_decision.assemble(
-                            branch_type, new_leaf.stats, new_leaf.depth, *leaves, **kwargs,
-                            merit=split_decision.merit,
-                            accumulated_features=accumulated_features)
+                        new_split = split_decision.assemble(
+                            branch, leaf.stats, leaf.depth, *leaves, **kwargs)
 
-                    # append the new branch to the option node above
-                    if isinstance(parent, OptionNode):
-                        parent.add_option_branch(new_branch)
-                    # create a new option node with two branches
-                    else:
-                        option_node = OptionNode(initial_node=current_node)
-                        option_node.add_option_branch(new_branch)
+                        for i, child in enumerate(new_split.children):
+                            new_split.children[i] = OptionNode(max_option=self.max_options,
+                                                               initial_node=new_split.children[i])
 
-                        if parent is None:
-                            self._root = option_node
+                        self._n_active_leaves -= 1
+                        self._n_active_leaves += len(leaves)
+                        if parent is None:  # non entra mai ?
+                            self._root = new_split
                         else:
-                            parent.children[parent_branch] = option_node
+                            # inject statistics into OptionNode
+                            parent.update_option_stats(hoeffding_bound=hoeffding_bound,
+                                                       split_attribute=new_split.feature,
+                                                       split_suggestions=best_split_suggestions)
+
+                            parent.children[parent_branch] = new_split
+
+            elif isinstance(parent, OptionNode) and parent.has_children():
+                # TODO
+                pass
+
+    def _attempt_to_split_option(self, current_node: OptionNode, parent_node: DTBranch | None, **kwargs):
+        if len(current_node.children) < current_node.max_option:
+
+            feasible_suggestions = [suggestion for suggestion in current_node.split_suggestions if
+                                    suggestion not in current_node.features_along_path]
+            split_decision = max(feasible_suggestions, key=lambda suggestion: suggestion.merit)
+            g_x = split_decision.merit
+
+            if g_x - current_node.bestG > current_node.hoeffding_bound:
+
+                current_node.attempt_cleanup_stats()
+
+        # if not current_node.has_children():
+        #     new_leaf = self._new_leaf()
+        #     current_node.add_option(new_leaf)
+        #
+        # # if leaf class distribution is not pure
+        # # pass the current_node variable by assignment, in order to transform it into a OptionNode
+        # should_split = True
+        # if isinstance(parent, OptionNode):
+        #     should_split = parent.option_count() < self.max_options
+        #
+        # if should_split:
+        #     split_criterion = self._new_split_criterion()
+        #
+        #     new_leaf = self._new_leaf()
+        #     new_leaf.learn_one(x, y, w=w, tree=self)
+        #     accumulated_features = []
+        #     """
+        #         Error here!
+        #             Ogni volta viene creata una foglia. Non ha "abbastanza statistiche" per scegliere su cosa splittare
+        #             quindi crea branch di default con info_gain nulli e quindi non entra mai nell'if dell'HBound.
+        #     """
+        #     best_split_suggestions = []
+        #     pre_split_dist = new_leaf.stats
+        #     for att_id, splitter in new_leaf.splitters.items():
+        #         best_suggestion = splitter.best_evaluated_split_suggestion(
+        #             split_criterion, pre_split_dist, att_id, True
+        #         )
+        #         best_split_suggestions.append(best_suggestion)
+        #
+        #     logger.info(best_split_suggestions)
+        #     best_split_suggestions = [b for b in best_split_suggestions if b not in accumulated_features]
+        #     best_split_suggestions.sort()
+        #
+        #     split_decision = best_split_suggestions[-1]
+        #     if split_decision.feature is not None:
+        #         logger.info(f"Adding {new_leaf.stats} to OptionBranch")
+        #         g_x = split_decision.split_info
+        #         g_s = parent.bestG if isinstance(parent, OptionNode) else 0
+        #         hoeffding_bound = self._hoeffding_bound(
+        #             split_criterion.range_of_merit(new_leaf.stats),
+        #             self.delta,
+        #             new_leaf.total_weight,
+        #         )
+        #         logger.info({g_s})
+        #
+        #         if g_x - g_s > hoeffding_bound:
+        #
+        #         # random.seed(123)  # Note: nice comparison between random split and hoeffding bound split
+        #         # if random.random() < 0.07:
+        #             logger.info(f"Creating OptionNode for node {current_node.feature}, parent: {parent.feature if isinstance(parent, DTBranch) else parent.__class__.__name__}")
+        #
+        #             branch_type = self._branch_selector(
+        #                 split_decision.numerical_feature, split_decision.multiway_split
+        #             )
+        #
+        #             leaves = tuple(
+        #                 self._new_leaf(initial_stats, parent=new_leaf)
+        #                 for initial_stats in split_decision.children_stats  # type: ignore
+        #             )
+        #
+        #             new_branch = split_decision.assemble(
+        #                     branch_type, new_leaf.stats, new_leaf.depth, *leaves, **kwargs,
+        #                     merit=split_decision.merit,
+        #                     accumulated_features=accumulated_features)
+        #
+        #             # append the new branch to the option node above
+        #             if isinstance(parent, OptionNode):
+        #                 parent.add_option_branch(new_branch)
+        #             # create a new option node with two branches
+        #             else:
+        #                 option_node = OptionNode(initial_node=current_node)
+        #                 option_node.add_option_branch(new_branch)
+        #
+        #                 if parent is None:
+        #                     self._root = option_node
+        #                 else:
+        #                     parent.children[parent_branch] = option_node
