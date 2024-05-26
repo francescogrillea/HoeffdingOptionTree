@@ -18,12 +18,11 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
     """ Hoeffding Option Tree classifier.
     """
 
-    def __init__(self, delta_prime: float = 3e-7, max_options=3, **kwargs):
+    def __init__(self, delta_prime: float = 0.955, max_options=3, **kwargs):
         super().__init__(**kwargs)
-        self.delta_prime = delta_prime
+        self._delta_prime = delta_prime
         self.max_options = max_options
         self.count = 0
-        self.buffer = []
 
         self._root: DTBranch | HTLeaf | OptionNode = None
 
@@ -120,40 +119,78 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
 
     def _attempt_to_split(self, leaf: HTLeaf, parent: DTBranch | OptionNode, parent_branch: int, **kwargs):
 
-        if not leaf.observed_class_distribution_is_pure():  # type: ignore
+        if leaf.observed_class_distribution_is_pure():  # type: ignore
+            return
 
-            split_criterion = self._new_split_criterion()
-            best_split_suggestions = leaf.best_split_suggestions(split_criterion, self)
-            best_split_suggestions.sort()
-            should_split = False
+        split_criterion = self._new_split_criterion()
+        best_split_suggestions = leaf.best_split_suggestions(split_criterion, self)
+        best_split_suggestions.sort()
+        should_split = False
 
-            # CASO 1 -> 2
-            if isinstance(parent, OptionNode) and parent.is_leaf_candidate(leaf):   # forse unico caso in cui option e' parent di una leaf -> altrimenti sempre un DTBranch
+        if parent.has_children():
+            if parent.option_count() == self.max_options:
+                return
 
-                parent_branch = 0
-                hoeffding_bound = -1
+            best_split_suggestions = [suggestion for suggestion in best_split_suggestions if suggestion.feature not in parent.split_features and suggestion.feature is not None]
 
-                best_split_suggestions = [suggestion for suggestion in best_split_suggestions if suggestion.feature not in parent.split_features and suggestion.feature is not None]
+            if len(best_split_suggestions) < 2:
                 should_split = len(best_split_suggestions) > 0
-
+            else:
                 hoeffding_bound = self._hoeffding_bound(
                     split_criterion.range_of_merit(leaf.stats),
-                    self.delta_prime,
+                    self._delta_prime,
                     leaf.total_weight,
                 )
 
                 best_attribute_merit = parent.bestG
                 split_decision = best_split_suggestions[-1]
-                if split_decision.merit - best_attribute_merit < 0:
-                    logger.warning(f"Negative Difference can never be splitted: {split_decision.merit - best_attribute_merit}")
 
-                if split_decision.merit - best_attribute_merit > hoeffding_bound or hoeffding_bound < self.tau:
+                if split_decision.merit - best_attribute_merit > hoeffding_bound:
                     should_split = True
 
-                logger.info(f"ShouldSplit: {should_split}")
-                if should_split:
-                    logger.info(f"Adding new DTBranch to OptionNode, which splits on {split_decision.feature}")
+            if should_split:
+                split_decision = best_split_suggestions[-1]
+                # logger.info(f"Adding new DTBranch to OptionNode, which splits on {split_decision.feature}")
 
+                branch = self._branch_selector(
+                    split_decision.numerical_feature, split_decision.multiway_split
+                )
+                leaves = tuple(
+                    self._new_leaf(initial_stats, parent=leaf)
+                    for initial_stats in split_decision.children_stats  # type: ignore
+                )
+
+                new_split = split_decision.assemble(
+                    branch, leaf.stats, leaf.depth, *leaves, **kwargs)
+
+                for i, child in enumerate(new_split.children):
+                    new_split.children[i] = OptionNode(max_option=self.max_options,
+                                                       initial_node=new_split.children[i])
+                parent.add_option(new_split, split_decision)
+        else:
+
+            if len(best_split_suggestions) < 2:
+                should_split = len(best_split_suggestions) > 0
+            else:
+                hoeffding_bound = self._hoeffding_bound(
+                    split_criterion.range_of_merit(leaf.stats),
+                    self.delta,
+                    leaf.total_weight,
+                )
+
+                best_suggestion = best_split_suggestions[-1]
+                second_best_suggestion = best_split_suggestions[-2]
+                if (
+                        best_suggestion.merit - second_best_suggestion.merit > hoeffding_bound
+                        or hoeffding_bound < self.tau
+                ):
+                    should_split = True
+
+            if should_split:
+                split_decision = best_split_suggestions[-1]
+                logger.info(f"Split on {split_decision.feature}")
+
+                if split_decision.feature is not None:
                     branch = self._branch_selector(
                         split_decision.numerical_feature, split_decision.multiway_split
                     )
@@ -168,24 +205,8 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                     for i, child in enumerate(new_split.children):
                         new_split.children[i] = OptionNode(max_option=self.max_options,
                                                            initial_node=new_split.children[i])
-                    parent.add_option(new_split, split_decision)
 
-    # def _attempt_to_split_option(self, x, y, w, current_node: OptionNode, parent_node: DTBranch | None, **kwargs):
-    #
-    #     if len(current_node.children) < current_node.max_option and not current_node.has_only_leaf():
-    #         feasible_suggestions = [suggestion for suggestion in current_node.split_suggestions if
-    #                                 suggestion.feature not in list(current_node.features_along_path)]
-    #         split_decision = max(feasible_suggestions, key=lambda suggestion: suggestion.merit)
-    #         g_x = split_decision.merit
-    #         # logger.info(f"GX: {g_x}\t CurrentBestG: {current_node.bestG}\t HB: {current_node.hoeffding_bound}")
-    #         if g_x - current_node.bestG > current_node.hoeffding_bound:
-    #             branch = self._branch_selector(
-    #                 split_decision.numerical_feature, split_decision.multiway_split
-    #             )
-    #             new_leaf = self._new_leaf()
-    #             new_leaf.learn_one(x, y, w=w, tree=self)
-    #             new_split = split_decision.assemble(
-    #                 branch, new_leaf.stats, new_leaf.depth, **kwargs)
-    #             #                branch, new_leaf.stats, new_leaf.depth, *leaves, ** kwargs)
-    #
-    #             current_node.add_option(new_split)
+                    self._n_active_leaves -= 1
+                    self._n_active_leaves += len(leaves)
+
+                    parent.add_option(new_split, split_decision)

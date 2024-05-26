@@ -49,11 +49,8 @@ class OptionNode:
             self._bestG = new_g
             self._bestG_index = i
 
-    def has_only_leaf(self):
-        return len(self.children) == 1 and isinstance(self.children[0], HTLeaf)
-
     def has_children(self):
-        return len(self.children) > 0 and not isinstance(self.children[0], HTLeaf)
+        return len(self.children) > 0
 
     def option_count(self):
         return len(self.children)
