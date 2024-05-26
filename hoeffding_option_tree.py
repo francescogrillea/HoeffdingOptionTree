@@ -187,7 +187,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
 
             if should_split:
                 split_decision = best_split_suggestions[-1]
-                logger.info(f"Split on {split_decision.feature}")
+                # logger.info(f"Split on {split_decision.feature}")
 
                 if split_decision.feature is not None:
                     branch = self._branch_selector(

@@ -3,7 +3,6 @@ from hoeffding_option_tree import HoeffdingOptionTreeClassifier
 from river.stream import iter_sklearn_dataset
 from sklearn import datasets
 from river.metrics import Accuracy
-import matplotlib.pyplot as plt
 
 model = HoeffdingOptionTreeClassifier(tau=1.5, grace_period=3)
 # model = HoeffdingTreeClassifier(tau=1.5, grace_period=3)
@@ -21,8 +20,3 @@ for i, (x, y) in enumerate(iter_sklearn_dataset(dataset, shuffle=True, seed=42))
 
 print(metric)
 print(metric.cm)
-# plt.plot(plot_metric)
-# plt.xlabel("Iteration")
-# plt.ylabel("Accuracy")
-# plt.title("Accuracy over Time")
-# plt.show()
