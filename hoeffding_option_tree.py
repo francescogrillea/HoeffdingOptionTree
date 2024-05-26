@@ -29,7 +29,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
     def learn_one(self, x, y, *, w=1.0):
 
         self.count += 1
-        logger.info(f"{self.count}\tNew instance received. Class: {y}")
+        # logger.info(f"{self.count}\tNew instance received. Class: {y}")
         # Updates the set of observed classes
         self.classes.add(y)
 
@@ -88,7 +88,6 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         while len(active_nodes) > 0:
             starting_node = active_nodes.pop(0)
             if isinstance(starting_node, OptionNode):
-                logger.info("Serve?")
                 active_nodes += starting_node.children
 
             elif isinstance(starting_node, DTBranch):
