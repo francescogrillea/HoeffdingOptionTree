@@ -5,7 +5,8 @@ from sklearn import datasets
 from river.metrics import Accuracy
 import matplotlib.pyplot as plt
 
-model = HoeffdingOptionTreeClassifier(tau=1.5)
+model = HoeffdingOptionTreeClassifier(tau=1.5, grace_period=3)
+# model = HoeffdingTreeClassifier(tau=1.5, grace_period=3)
 dataset = datasets.load_iris()
 metric = Accuracy()
 plot_metric = []
