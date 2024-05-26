@@ -6,17 +6,13 @@ class OptionNode:
     _traverse_mode = ["first", "all"]
 
     def __init__(self, max_option,
-                 initial_node: HTLeaf = None,
-                 parent_feature: str = None):
+                 initial_node: HTLeaf = None):
 
         self.max_option = max_option
         self.children: list[HTLeaf | DTBranch] = []
         if initial_node is not None:
             self.children = [initial_node]
 
-        # self.split_suggestions = dict()
-        # if parent_feature is not None:
-        #     self.used_features.add(parent_feature)
         self.features_along_path = set()
         self.split_suggestions = None
 
@@ -24,12 +20,12 @@ class OptionNode:
         self._bestG_index = -1
         self._hoeffding_bound = 0
 
-    # def add_option(self, x: HTLeaf | DTBranch):
-    #     self.children.append(x)
-    #     # clean statistics
-    #     if len(self.children) == self.max_option:
-    #         delattr(self, "split_suggestions")
-    #         delattr(self, "_hoeffding_bound")
+    def add_option(self, x: HTLeaf | DTBranch):
+        self.children.append(x)
+        # clean statistics
+        if len(self.children) == self.max_option:
+            delattr(self, "split_suggestions")
+            delattr(self, "_hoeffding_bound")
 
     def attempt_cleanup_stats(self):
         if len(self.children) == self.max_option:
@@ -60,15 +56,12 @@ class OptionNode:
         # TODO - controllare se va bene passarla per riferimento
         return self.children
 
-    def __repr__(self):
-        return f"<OptionNode: {[c.__class__.__name__ for c in self.children]}>"
-
     def can_split(self):
         return len(self.children) < self.max_option
 
     @property
     def hoeffding_bound(self):
-        return self.hoeffding_bound
+        return self._hoeffding_bound
 
     @hoeffding_bound.setter
     def hoeffding_bound(self, value):
