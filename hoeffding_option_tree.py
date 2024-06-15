@@ -5,6 +5,8 @@ from river.tree import HoeffdingTreeClassifier
 from river.tree.nodes.leaf import HTLeaf
 from river.tree.nodes.branch import DTBranch
 from option_node import OptionNode
+import concurrent.futures
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,10 +17,20 @@ logger = logging.getLogger(__name__)
 
 
 class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
-    """ Hoeffding Option Tree classifier.
     """
+       Hoeffding Option Tree classifier.
 
-    def __init__(self, delta_prime: float = 0.955, max_options=3, **kwargs):
+       A Hoeffding Option Tree (HOT) is an advanced decision tree designed for online learning. It extends the standard
+        Hoeffding Tree by allowing multiple decisions simultaneously, facilitating exploration of different paths.
+
+       Attributes:
+           delta_prime (float): Confidence level parameter for Hoeffding bound.
+           max_options (int): Maximum number of options that can be added to an option node.
+           count (int): Counter for the number of instances seen.
+           _root (DTBranch | HTLeaf | OptionNode): The root node of the tree, which can be a decision branch,
+                                                  a leaf, or an option node.
+       """
+    def __init__(self, delta_prime: float = 0.955, max_options: int = 3, **kwargs):
         super().__init__(**kwargs)
         self._delta_prime = delta_prime
         self.max_options = max_options
@@ -27,6 +39,19 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         self._root: DTBranch | HTLeaf | OptionNode = None
 
     def learn_one(self, x, y, *, w=1.0):
+        """
+        Update the tree with a single instance (x, y) with weight w.
+        The learning algorithm can be outlined as:
+            1. Initialize the root node as an OptionNode with a LeafNode as Candidate Option Branch
+            2. Collect enough samples into the LeafNode
+            3. Learn the node
+            4. Add as children to OptionNode if requirements are satisfied
+
+        Args:
+            x: feature values of the instance.
+            y: target value of the instance.
+            w (float): sample weight (default is 1.0).
+        """
 
         self.count += 1
         # logger.info(f"{self.count}\tNew instance received. Class: {y}")
@@ -40,11 +65,11 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             self._root = OptionNode(self.max_options,
                                     initial_node=current_node)
 
-        nodes_to_traverse = deque()
+        nodes_to_traverse = deque()     # queue of (current_node, parent_node) pairs
         for child in self._root.children:
             nodes_to_traverse.append((child, self._root))
 
-        if self._root.candidate_option_branch is not None:
+        if self._root.has_candidate_option_branch():
             nodes_to_traverse.append((self._root.candidate_option_branch, self._root))
 
         # traverse until leaf(s)
@@ -116,7 +141,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             proba.update(leaf.prediction(x, tree=self))
         return proba
 
-    def _attempt_to_split(self, leaf: HTLeaf, parent: DTBranch | OptionNode, parent_branch: int, **kwargs):
+    def _attempt_to_split(self, leaf: HTLeaf, parent: OptionNode, parent_branch: int, **kwargs):
 
         if leaf.observed_class_distribution_is_pure():  # type: ignore
             return
@@ -127,7 +152,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
         should_split = False
 
         if parent.has_children():
-            if parent.option_count() == self.max_options:
+            if not parent.can_split():
                 return
 
             best_split_suggestions = [suggestion for suggestion in best_split_suggestions if suggestion.feature not in parent.split_features and suggestion.feature is not None]
@@ -147,25 +172,6 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                 if split_decision.merit - best_attribute_merit > hoeffding_bound:
                     should_split = True
 
-            if should_split:
-                split_decision = best_split_suggestions[-1]
-                # logger.info(f"Adding new DTBranch to OptionNode, which splits on {split_decision.feature}")
-
-                branch = self._branch_selector(
-                    split_decision.numerical_feature, split_decision.multiway_split
-                )
-                leaves = tuple(
-                    self._new_leaf(initial_stats, parent=leaf)
-                    for initial_stats in split_decision.children_stats  # type: ignore
-                )
-
-                new_split = split_decision.assemble(
-                    branch, leaf.stats, leaf.depth, *leaves, **kwargs)
-
-                for i, child in enumerate(new_split.children):
-                    new_split.children[i] = OptionNode(max_option=self.max_options,
-                                                       initial_node=new_split.children[i])
-                parent.add_option(new_split, split_decision)
         else:
 
             if len(best_split_suggestions) < 2:
@@ -185,27 +191,24 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
                 ):
                     should_split = True
 
-            if should_split:
-                split_decision = best_split_suggestions[-1]
-                # logger.info(f"Split on {split_decision.feature}")
+        if should_split:
+            split_decision = best_split_suggestions[-1]
+            # logger.info(f"Split on {split_decision.feature}")
 
-                if split_decision.feature is not None:
-                    branch = self._branch_selector(
-                        split_decision.numerical_feature, split_decision.multiway_split
-                    )
-                    leaves = tuple(
-                        self._new_leaf(initial_stats, parent=leaf)
-                        for initial_stats in split_decision.children_stats  # type: ignore
-                    )
+            if split_decision.feature is not None:
+                branch = self._branch_selector(
+                    split_decision.numerical_feature, split_decision.multiway_split
+                )
+                leaves = tuple(
+                    self._new_leaf(initial_stats, parent=leaf)
+                    for initial_stats in split_decision.children_stats  # type: ignore
+                )
 
-                    new_split = split_decision.assemble(
-                        branch, leaf.stats, leaf.depth, *leaves, **kwargs)
+                new_split = split_decision.assemble(
+                    branch, leaf.stats, leaf.depth, *leaves, **kwargs)
 
-                    for i, child in enumerate(new_split.children):
-                        new_split.children[i] = OptionNode(max_option=self.max_options,
-                                                           initial_node=new_split.children[i])
+                for i, child in enumerate(new_split.children):
+                    new_split.children[i] = OptionNode(max_option=self.max_options,
+                                                       initial_node=child)
 
-                    self._n_active_leaves -= 1
-                    self._n_active_leaves += len(leaves)
-
-                    parent.add_option(new_split, split_decision)
+                parent.add_option(new_split, split_decision)

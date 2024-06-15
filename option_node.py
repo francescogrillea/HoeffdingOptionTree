@@ -3,7 +3,20 @@ from river.tree.nodes.branch import DTBranch
 
 
 class OptionNode:
-    _traverse_mode = ["first", "all"]
+    """
+    Option Node for Hoeffding Option Tree.
+
+    This class represents an option node in the Hoeffding Option Tree, which can hold multiple decision branches
+    in order to test simultaneously on each split node.
+
+    Attributes:
+        max_option (int): Maximum number of decision branches can be added to this node.
+        initial_node (DTBranch | HTLeaf): The initial node to start with.
+        children (list): List of all decision branches that can be traversed simultaneously.
+        candidate_option_branch (DTBranch | HTLeaf): Candidate branch which can be added as child.
+        split_features (set): Set of features used for splitting in the child branches.
+        _bestG (float): Best split value among all decision branches.
+    """
 
     def __init__(self, max_option,
                  initial_node: HTLeaf = None):
@@ -13,62 +26,28 @@ class OptionNode:
         self._candidate_option_branch = initial_node
 
         self.split_features = set()
-        self.split_suggestions = None
-
         self._bestG = 0
-        self._bestG_index = -1
-        self._hoeffding_bound = 0
 
     def add_option(self, x: DTBranch, split_decision):
-        self.children.append(x)
+        self.children.append(x)  # add decision branch as Option children
 
-        self.split_features.add(split_decision.feature)
-        self.candidate_option_branch = None
+        self.split_features.add(split_decision.feature)  # update the used features in Option Node
+        self._candidate_option_branch = None  # reset the candidate Option Branch
 
-        if self._bestG < split_decision.merit:
+        if self._bestG < split_decision.merit:  # update the best G
             self._bestG = split_decision.merit
 
-        # clean statistics
-        if len(self.children) == self.max_option:
-            delattr(self, "split_suggestions")
-            delattr(self, "_hoeffding_bound")
-
-    def attempt_cleanup_stats(self):
-        if len(self.children) == self.max_option:
-            delattr(self, "split_suggestions")
-            delattr(self, "_hoeffding_bound")
-
-    def update_option_stats(self, hoeffding_bound: float, split_attribute: str, split_suggestions: list):
-        self.split_features.add(split_attribute)
-        self._hoeffding_bound = hoeffding_bound
-        self.split_suggestions = split_suggestions
-        # update _bestG and _bestG_index
-        i, new_g = [(i, suggestion.merit) for i, suggestion in enumerate(split_suggestions) if
-                    suggestion.feature is not None and suggestion.feature == split_attribute][0]
-        if self._bestG < new_g:
-            self._bestG = new_g
-            self._bestG_index = i
+        if len(self.children) == self.max_option:  # clean statistics
+            delattr(self, "split_features")
 
     def has_children(self):
         return len(self.children) > 0
 
-    def option_count(self):
-        return len(self.children)
-
-    def traverse(self, mode="first"):
-        # TODO - controllare se va bene passarla per riferimento
-        return self.children
-
     def can_split(self):
         return len(self.children) < self.max_option
 
-    @property
-    def hoeffding_bound(self):
-        return self._hoeffding_bound
-
-    @hoeffding_bound.setter
-    def hoeffding_bound(self, value):
-        self._hoeffding_bound = value
+    def has_candidate_option_branch(self):
+        return self._candidate_option_branch is not None
 
     @property
     def bestG(self):
@@ -82,8 +61,5 @@ class OptionNode:
     def candidate_option_branch(self, value):
         self._candidate_option_branch = value
 
-    def is_leaf_candidate(self, leaf: HTLeaf):
-        return self.candidate_option_branch == leaf
-
     def can_add_candidate(self):
-        return self.candidate_option_branch is None and self.max_option > len(self.children) > 0
+        return self._candidate_option_branch is None and self.max_option > len(self.children) > 0
