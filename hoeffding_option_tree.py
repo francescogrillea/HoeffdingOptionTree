@@ -1,3 +1,5 @@
+import math
+from math import exp, pow, log
 from collections import Counter, deque
 import logging
 
@@ -6,7 +8,6 @@ from river.tree.nodes.leaf import HTLeaf
 from river.tree.nodes.branch import DTBranch
 from option_node import OptionNode
 import concurrent.futures
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,9 +31,13 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
            _root (DTBranch | HTLeaf | OptionNode): The root node of the tree, which can be a decision branch,
                                                   a leaf, or an option node.
        """
-    def __init__(self, delta_prime: float = 0.955, max_options: int = 3, **kwargs):
+
+    def __init__(self, delta_prime: float = None, alpha: float = 0.05, max_options: int = 3, **kwargs):
         super().__init__(**kwargs)
-        self._delta_prime = delta_prime
+        if delta_prime is None:
+            self._delta_prime = exp(pow(alpha, 2) * log(self.delta))
+        else:
+            self._delta_prime = delta_prime
         self.max_options = max_options
         self.count = 0
 
@@ -65,7 +70,7 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             self._root = OptionNode(self.max_options,
                                     initial_node=current_node)
 
-        nodes_to_traverse = deque()     # queue of (current_node, parent_node) pairs
+        nodes_to_traverse = deque()  # queue of (current_node, parent_node) pairs
         for child in self._root.children:
             nodes_to_traverse.append((child, self._root))
 
@@ -155,7 +160,8 @@ class HoeffdingOptionTreeClassifier(HoeffdingTreeClassifier):
             if not parent.can_split():
                 return
 
-            best_split_suggestions = [suggestion for suggestion in best_split_suggestions if suggestion.feature not in parent.split_features and suggestion.feature is not None]
+            best_split_suggestions = [suggestion for suggestion in best_split_suggestions if
+                                      suggestion.feature not in parent.split_features and suggestion.feature is not None]
 
             if len(best_split_suggestions) < 2:
                 should_split = len(best_split_suggestions) > 0
